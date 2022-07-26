@@ -22,6 +22,7 @@ class RuleContainer(object):
         self.stg3: 'Strategy' = Strategy()
         self.stg4: 'Strategy' = Strategy()
         self.weight: np.ndarray = None
+        self.other_x: np.ndarray = None
         self.thresh: Dict[str, Tuple[float, float]] = {}
         self.meta_f: Callable[[tuple, list], int] = None
         self.meta_s: List[str] = None
@@ -40,7 +41,7 @@ class RuleContainer(object):
         print(self.stg4.record, '\n')
         print('x_hat[{}]='.format(self.pos),
               ['{:.2f}'.format(x) for x in self.x_hat], '\n')
-        print('total gain[{}]= {:.0f}'.format(self.pos, (g3*0.8+g4*0.2)))
+        print('total gain[{}]= {:.3f}'.format(self.pos, (g3*0.8+g4*0.2)))
         print('total loss[{}]= {:.0f}\n'.format(self.pos, (l3*0.8+l4*0.2)/10))
 
     def f(self, s: tuple, name: list) -> int:
@@ -50,13 +51,14 @@ class RuleContainer(object):
             x = d.get(n, 0)
             if n in self.thresh:
                 t, c = self.thresh[n]
+                t -= self.other_x[i]
                 if x > t:
                     r += self.weight[i]*(t+(x-t)/np.exp((x-t)/c))
                 else:
                     r += self.weight[i]*x
             else:
                 r += self.weight[i]*x
-        return int(r)
+        return np.round(max(r, 0))
 
     def cal_weight(self, x_hat: np.ndarray):
         dp, dy = {}, {}
@@ -85,7 +87,7 @@ class RuleContainer(object):
         if self.ms in self.meta_s:
             Aw = np.delete(Aw, self.meta_s.index(self.ms), 1)
         res = np.linalg.lstsq(Aw, yw, rcond=-1)
-        s = res[0]
+        s, l = res[0], len(res[0])-1
         if self.ms in self.meta_s:
             s = np.insert(s, self.meta_s.index(self.ms), 0)
         w = []
@@ -94,10 +96,13 @@ class RuleContainer(object):
                 w.append(0)
             else:
                 w.append(s[self.meta_s.index(n)])
-        w.append(s[-1])
+        # wx+b<0 if stat num |x|<=1 (controversial)
+        b = -sum(w)/l
+        w.append(b)
         self.weight = np.array(w)
         if self.output:
-            print('weight[{}][{}]: '.format(self.pos, self.ms), self.weight)
+            print('weight[{}][{}]: '.format(self.pos, self.ms),
+                  ['{:.1f}'.format(k) for k in self.weight])
         return self.weight
 
     @property
@@ -138,11 +143,12 @@ class RuleContainer(object):
                       if n in self.meta_s])
 
     def redo(self, x_hat: np.ndarray, loss3: int, loss4: int):
+        self.other_x = x_hat
         self.cal_weight(x_hat)
         self.rule3.initialize(self.pos, self.ms, 3)
         self.rule4.initialize(self.pos, self.ms, 4)
-        self.rule3.opt(iter=3, threshold=loss3)
-        self.rule4.opt(iter=3, threshold=loss4)
+        self.rule3.opt(threshold=loss3, output=self.output)
+        self.rule4.opt(threshold=loss4, output=self.output)
         self.stg3.set_rule(self.rule3, self.rule3)
         self.stg4.set_rule(self.rule4, self.rule4)
         self.stg3.analyze(self.pos, self.ms, 3)
@@ -156,19 +162,21 @@ class RuleContainer(object):
             print(self.stg4.record, '\n')
 
     def initialize(self, x_hat: np.ndarray, loss3: int, loss4: int):
+        self.other_x = x_hat
         grad = np.zeros(11)
-        b = grad[-1] = self.meta_f(x_hat)
+        b = self.meta_f(x_hat)
         for i in range(10):
             tmp = x_hat.copy()
             tmp[i] += 1
             grad[i] = self.meta_f(tmp)-b
+        grad[-1] = -sum(grad)/len(self.meta_s)
         self.weight = grad
         self.rule3 = Rule(self.f)
         self.rule4 = Rule(self.f)
         self.rule3.initialize(self.pos, self.ms, 3)
         self.rule4.initialize(self.pos, self.ms, 4)
-        self.rule3.opt(iter=3, threshold=loss3)
-        self.rule4.opt(iter=3, threshold=loss4)
+        self.rule3.opt(threshold=loss3, output=self.output)
+        self.rule4.opt(threshold=loss4, output=self.output)
         self.stg3.set_rule(self.rule3, self.rule3)
         self.stg4.set_rule(self.rule4, self.rule4)
         self.stg3.analyze(self.pos, self.ms, 3)
@@ -192,7 +200,7 @@ class Controller(object):
         '''
         self.loss3: Tuple = tuple()
         self.loss4: Tuple = tuple()
-        self.init_x: List = []
+        self.init_x: np.ndarray = None
 
         self.Rf = RuleContainer('flower')
         self.Rp = RuleContainer('plume')
@@ -237,9 +245,12 @@ class Controller(object):
         self.Rf.meta_s = self.Rp.meta_s = self.Rs.meta_s = \
             self.Rg.meta_s = self.Rc.meta_s = self.meta_s
 
-    def set_x(self, x: List):
+    def set_x(self, x: np.ndarray):
         'set the initial state of each position'
-        self.init_x = x
+        xs = []
+        for i in range(5):
+            xs.append(sum([x[j] for j in range(5) if j != i]))
+        self.init_x = xs
 
     def set_loss(self, loss3: tuple, loss4: tuple):
         'set the acceptable loss for each position'
@@ -333,7 +344,7 @@ class Controller(object):
             xs = [containers[i].x_hat for i in range(5)]
             for i in range(5):
                 new_x = sum([xs[j] for j in range(5) if j != i])
-                print(new_x, i)
+                print(f'pos={i} ', ['{:.1f}'.format(k) for k in new_x])
                 containers[i].redo(new_x, self.loss3[i], self.loss4[i])
             if input('do you want to show all?(y/n)') == 'y':
                 self.show_all()
@@ -342,7 +353,7 @@ class Controller(object):
             containers[i].rule3.complete()
             containers[i].rule4.complete()
 
-    def simulate(self, times: List[int], filename: str = ''):
+    def simulate(self, times: List[int], merge: int = -1) -> Dict[tuple, float]:
         self.Sf = Sim(self.Rf.f)
         self.Sp = Sim(self.Rp.f)
         self.Ss = Sim(self.Rs.f)
@@ -353,7 +364,8 @@ class Controller(object):
         combs = [containers[i].f_dis for i in range(5)]
         for i in range(5):
             print(f'position {i}, len=', len(combs[i]))
-        merge = int(input('do you want to merge the state? merge='))
+        if merge == -1:
+            merge = int(input('do you want to merge the state? merge_num='))
 
         states = []
         for i in range(5):
@@ -361,49 +373,29 @@ class Controller(object):
             s = sims[i].state_trans(times[i])
             d = {}
             for j, val in enumerate(sims[i].origin_key):
-                k = sims[i].rev[val][0][0]
-                v = s[j]
-                d[k] = v
+                if merge:
+                    d[sims[i].rev[val][0][0]] = s[j]
+                else:
+                    pr_sum = sum([t[1] for t in sims[i].rev[val]])
+                    for k, pr in sims[i].rev[val]:
+                        d[k] = (pr/pr_sum)*s[j]
             states.append(d)
-            print('rev len=', len(sims[i].rev))
-            # stg_view(containers[i].stg4, self.cnt_s, filename+str(i))
+            print('rev len=', len(d))
         final_dis = self.product(states)
-        # view average stat distribution
-        x = sum([np.array(k)*v for k, v in final_dis.items()])
-        print(dict(zip(self.meta_s, x)))
-        # view value distribution
-        # val_view(final_dis, self.meta_s, self.meta_f, filename)
-
-        val_dis = {}
-        for s, p in final_dis.items():
-            val = self.meta_f(s, self.meta_s)
-            val_dis.setdefault(val, 0)
-            val_dis[val] += p
-        x, y = zip(*sorted(val_dis.items()))
-        pr = np.cumsum(y)
-        div = list(range(5, 20, 5)) + \
-            list(range(20, 80, 2)) + \
-            list(range(80, 100, 5))
-        l = dict.fromkeys(div, 0)
-        pre = 0
-        for i, p in enumerate(pr):
-            if not div:
-                break
-            if p > div[0]/100:
-                l[div[0]] = int(pre*6.538464)
-                div.pop(0)
-            pre = x[i]
-        pprint.pprint(l)                
+        return final_dis
 
 
 if __name__ == "__main__":
     def func(s, name=[]):
-        if len(name) == 4:
-            a, aa, cr, cd = s
+        if len(name) == 5:
+            a, aa, em, cr, cd = s
+        elif len(name) == 10 or len(name) == 0:
+            a, aa, em, cr, cd = s[0], s[1], s[7], s[8], s[9]
         else:
-            a, aa, cr, cd = s[0], s[1], s[8], s[9]
-        r = (943*(1+0.466+0.496+0.05*aa)+311+16.53*a) * \
-            (1+(0.05+0.331+0.033*cr)*(0.5+0.384+0.066*cd))
+            raise KeyError
+        r = (943*(1+0.466+0.496+0.0496*aa)+311+16.54*a) *\
+            (1+(0.05+0.2+0.331+0.0331*cr)*(0.5+0.384+0.0662*cd)) *\
+            (1+2.78*(19.82*em+80)/(19.82*em+80+1400))*1.5
         return int(r)
 
     x = np.array([3, 4, 3, 3, 3, 3, 2, 2, 4, 5])
@@ -411,12 +403,17 @@ if __name__ == "__main__":
     r = RuleContainer('plume')
     r.ms = 'ATK'
     r.meta_f = func
-    r.meta_s = ['ATK', 'ATK_PER', 'CR', 'CD']
-    r.thresh = {}
+    r.meta_s = ['ATK', 'ATK_PER', 'EM', 'CR', 'CD']
+    r.thresh = {'CR': (6, 4)}
 
+    r.output = False
     r.initialize(x, 40000, 60000)
-    print(r.x_hat, r.x_hat.sum())
-    print('weight init:', r.weight)
+    r.show_all()
+    print('\nweight init:', r.weight)
     r.redo(x, 40000, 60000)
-    print(r.x_hat, r.x_hat.sum())
+    r.show_all()
+    # r.redo(x, 40000, 60000)
+    # r.show_all()
+    cr = r.x_hat[-2]
+    print('\nCR: ', 0.05+0.2+0.331+0.033*(cr+x[-2]))
     print('done')

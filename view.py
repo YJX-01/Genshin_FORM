@@ -210,9 +210,9 @@ def stg_view(stg: Strategy, f: Callable[[tuple, list], int], filename: str = '')
     explode = [0 for _ in range(len(size))]
     explode[label.index('5')] = 0.1
     cmap = plt.cm.get_cmap('viridis')
-    cl = [cmap((i+1)/7) for i in range(6)]
-    ax1.pie(size, explode=explode, autopct='%1.3f%%',
-            startangle=90, colors=cl,
+    color = [cmap((i+1)/7) for i in range(6)]
+    ax1.pie(size, explode=explode, autopct='%1.2f%%',
+            startangle=90, colors=color,
             textprops=dict(color="w"))
     ax1.axis('equal')
     ax1.set_title(f'{filename} Abandoned Artifact Ratio')
@@ -223,25 +223,26 @@ def stg_view(stg: Strategy, f: Callable[[tuple, list], int], filename: str = '')
         val = f(s, stg.desire_key)
         data.setdefault(val, 0)
         data[val] += p
-    xl, h = zip(*data.items())
-    lb = [str(i) for i in range(min(xl), max(xl)+1)]
-    if len(xl) > 20 or max(xl)-min(xl) > 30:
-        interval = (max(xl)-min(xl))//15
-        div = list(range(min(xl), max(xl), interval))+[max(xl)+1]
-        tmp, lb = [], []
+    x, y = zip(*sorted(data.items()))
+    h, label = y, [str(i) for i in range(min(x), max(x)+1)]
+    if len(x) > 20 or max(x)-min(x) > 30:
+        interval = (max(x)-min(x))//15
+        div = list(range(min(x), max(x), interval))+[max(x)+1]
+        h, label = [], []
         for i in range(len(div)-1):
-            s = sum([h[j] for j in range(len(h))
-                     if div[i] <= xl[j] < div[i+1]])
-            tmp.append((div[i], s))
-            lb.append(str_format(int(div[i]+interval/2)))
-        xl, h = zip(*tmp)
-    norm = mpl.colors.Normalize(vmin=min(xl), vmax=max(xl))
-    cl = [cmap(norm(d)) for d in xl]
+            s = sum([y[j] for j in range(len(y))
+                     if div[i] <= x[j] < div[i+1]])
+            h.append(s)
+            label.append(str_format(int(div[i]+interval/2)))
+    h = np.array(h)/sum(y)
+    norm = mpl.colors.Normalize(vmin=0, vmax=len(h)-1)
+    cl = [cmap(norm(d)) for d in range(len(h))]
 
-    ax2.bar(range(len(xl)), h, color=cl)
-    ax2.set_xticks(range(len(xl)), labels=lb)
-    ax2.set_xlim(left=-0.5, right=len(xl))
+    ax2.bar(range(len(h)), h, color=cl)
+    ax2.set_xticks(range(len(h)), labels=label)
+    ax2.set_xlim(left=-0.5, right=len(h)-0.5)
     ax2.grid(axis='y', alpha=0.8)
+    ax2.yaxis.set_major_formatter('{x:1.1%}')
     ax2.set_axisbelow(True)
     ax2.set_title(f'{filename} Finished Artifact Distribution')
     ax2.set_xlabel('value')
@@ -294,6 +295,7 @@ def val_view(dis: Dict[tuple, float], key: List[str], f: Callable[[tuple, list],
     ax1.set_xlabel('value')
     ax1.set_ylabel('pr', color='royalblue')
     ax1.tick_params(axis='y', labelcolor='royalblue')
+    ax1.yaxis.set_major_formatter('{x:1.1%}')
 
     ax2 = ax1.twinx()
     x = (np.array(x)-vs.min()-interval/2)/interval
@@ -303,6 +305,7 @@ def val_view(dis: Dict[tuple, float], key: List[str], f: Callable[[tuple, list],
     ax2.set_yticks(np.linspace(0, 1, 11))
     ax2.set_ylabel('cpr', color='coral')
     ax2.tick_params(axis='y', labelcolor='coral')
+    ax2.yaxis.set_major_formatter('{x:1.0%}')
 
     elems = [line2[0], line1[0],
              mpl.patches.Patch(facecolor='royalblue', edgecolor='snow', label='distribution')]

@@ -18,7 +18,7 @@ class Rule(object):
         self.value: Callable[[tuple, list], float] = f
         self.spaces: List[Dict[tuple, int]] = []   # 0,1,2,3,4,5
         self.pr: List[np.ndarray] = []             # 0,1,2,3,4,5
-        self.trans: List[List[np.ndarray]] = []    # 0,1,2,3,4
+        self.trans: List[np.ndarray] = []          # 0,1,2,3,4
         self.choices: List[np.ndarray] = []        # 0,1,2,3,4
         self.omega: np.ndarray = None
 
@@ -56,14 +56,14 @@ class Rule(object):
                 for ns in self.find_adj(s):
                     d[next_state_id[ns]] = 0.25
                 tran[index] = d
-            self.trans.append(tran)
+            self.trans.append(np.array(tran))
 
         prob = np.zeros(len(self.spaces[0]))
         for s, p in init_dis.items():
             prob[self.spaces[0].get(self.to_key(s))] = p
         self.pr.append(prob)
         for i in range(5):
-            self.choices.append(np.ones(len(prob), dtype=int))
+            self.choices.append(np.ones(len(prob), dtype=bool))
             A = np.array(self.trans[i])
             next_prob = prob @ A
             prob = next_prob
@@ -97,7 +97,7 @@ class Rule(object):
             for ns, p in dic.items():
                 d[state_id[self.to_key(ns)]] = p
             tran[index] = d
-        self.trans.append(tran)
+        self.trans.append(np.array(tran))
 
         for i in range(1, 5):
             next_states = set()
@@ -116,14 +116,14 @@ class Rule(object):
                 for ns in self.find_adj(s):
                     d[next_state_id[ns]] = 0.25
                 tran[index] = d
-            self.trans.append(tran)
+            self.trans.append(np.array(tran))
 
         prob = np.zeros(len(self.spaces[0]))
         for s, p in init_dis.items():
             prob[self.spaces[0].get(self.to_key(s))] = p
         self.pr.append(prob)
         for i in range(5):
-            self.choices.append(np.ones(len(prob), dtype=int))
+            self.choices.append(np.ones(len(prob), dtype=bool))
             A = np.array(self.trans[i])
             next_prob = prob @ A
             prob = next_prob
@@ -163,36 +163,42 @@ class Rule(object):
         self.choices = []
         self.omega = None
 
-    def opt(self, iter: int = 1, threshold: float = 300000) -> Tuple[float, float]:
+    def opt(self, iter: int = 1, threshold: float = 300000, output: bool = False):
         self.threshold = threshold
         choice = (0, 0, 0, 0, 0)
         for round in range(iter):
-            for gen in range(0, 5):
-                A = (np.array(self.trans[4]).T*self.choices[4])
+            for gen in range(4, -1, -1):
+                A = (self.trans[4].T*self.choices[4])
                 for i in range(3, gen-1, -1):
-                    A = A@(np.array(self.trans[i]).T*self.choices[i])
+                    A = A@(self.trans[i].T*self.choices[i])
 
                 w = self.omega@A
                 y = sum([np.matmul(self.pr[g], self.choices[g])*self.cost[g]
                          for g in range(5) if g < gen])
 
                 p = self.to_p(gen)
-                self.choices[gen] = np.zeros(len(w), dtype=int)
+                self.choices[gen] = np.zeros(len(w), dtype=bool)
                 self.find_k(y, w, p, gen)
 
                 for g in range(gen, 5, 1):
                     self.pr[g+1] = self.pr[g] @ \
-                        (np.array(self.trans[g]).T*self.choices[g]).T
+                        (self.trans[g].T*self.choices[g]).T
+                    if g+1 < 5:
+                        self.choices[g+1] = self.choices[g+1]\
+                            & (self.pr[g+1] > 0)
 
-            choice_tmp = [sum(self.choices[i]) for i in range(5)]
-            if tuple(choice_tmp) == choice:
+            choice_tmp = tuple([sum(self.choices[i]) for i in range(5)])
+            if output:
+                for i in range(5):
+                    a, b = sum(self.choices[i]), len(self.choices[i])
+                    print(f'at {i} gen:',
+                        'up={:<4}, total={:<4}, ratio={:.3%},'.format(a, b, a/b),
+                        'pr={:.3%}'.format(sum(self.pr[i])))
+                print(choice_tmp)
+            if choice_tmp == choice:
                 break
             else:
-                choice = tuple(choice_tmp)
-        loss = sum([np.matmul(self.pr[g], self.choices[g])*self.cost[g]
-                    for g in range(5)])
-        gain = np.matmul(self.omega, self.pr[5])
-        return loss, gain
+                choice = choice_tmp
 
     def find_k(self, y, w, p, gen):
         order = sorted(zip(w/p, range(len(w))), reverse=True)
@@ -201,13 +207,13 @@ class Rule(object):
         for v, index in order:
             if w[index] <= 0:
                 break
-            if upper*p[index] > lower*w[index] and lower+p[index]*pr[index] > self.threshold:
+            if upper*p[index] > lower*w[index] and lower > self.threshold:
                 break
             else:
                 upper += w[index]*pr[index]
                 lower += p[index]*pr[index]
                 if pr[index] > 0:
-                    self.choices[gen][index] = 1
+                    self.choices[gen][index] = True
 
     def to_p(self, gen: int) -> np.ndarray:
         n = len(self.spaces[gen])
@@ -217,11 +223,11 @@ class Rule(object):
             if i == 0:
                 p += self.cost[gen]*np.ones(n)
             elif i == 1:
-                A = np.array(self.trans[gen]).T
+                A = self.trans[gen].T
                 p += self.cost[gen+1]*(self.choices[gen+1]@A)
             else:
                 t = gen+i-1
-                A = (np.array(self.trans[t]).T*self.choices[t])@A
+                A = (self.trans[t].T*self.choices[t])@A
                 p += self.cost[gen+i]*(self.choices[gen+i]@A)
         return p
 

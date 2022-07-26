@@ -133,6 +133,7 @@ class Strategy(object):
             return self.analyze3(dis, main_stat)
 
     def cal_gain(self, f: Callable) -> Tuple[float, float]:
+        'return gain, loss'
         gain = 0
         for s, p in self.desire_dis.items():
             gain += f(s, self.desire_key)*p

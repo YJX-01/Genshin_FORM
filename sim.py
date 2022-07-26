@@ -23,8 +23,11 @@ class Sim(object):
         `key`: corresponding key of dis\n
         p.s. pr sum doesn't necessarily be 1, the other pr is for undesired(origin_key=0)
         '''
+        if merge == 0:
+            self.initialize0(dis, key)
+            return
         val_map, rev_map = {}, {}
-        val_set = set()
+        val_set = set([0])
         for point, pr in dis.items():
             val = (self.value(point, key)//merge)*merge
             val_map[point] = val
@@ -33,12 +36,12 @@ class Sim(object):
             if pr > same[0][1]:
                 same[0] = (point, pr)
         rev_map[0] = [(tuple([0 for _ in range(len(key))]), 1)]
-        self.origin_key = list(sorted(val_set, reverse=True))+[0]
+        self.origin_key = list(sorted(val_set, reverse=True))
         self.origin_dis = [0 for _ in range(len(val_set))]
         for point, v in val_map.items():
             index = self.origin_key.index(v)
             self.origin_dis[index] += dis[point]
-        self.origin_dis.append(1-sum(dis.values()))
+        self.origin_dis[-1] += (1-sum(dis.values()))
         self.origin_dis = np.array(self.origin_dis)
         self.trans = self.to_matrix()
         self.rev = rev_map
@@ -115,3 +118,23 @@ class Sim(object):
             record.append((t, avg,
                            bound[0], bound[1], bound[2], bound[3], bound[4]))
         return record
+
+    def initialize0(self, dis: Dict[tuple, float], key: List[str]):
+        val_map, rev_map = {}, {}
+        val_set = set([0])
+        for point, pr in dis.items():
+            val = self.value(point, key)
+            val_map[point] = val
+            val_set.add(val)
+            rev_map.setdefault(val, [])
+            rev_map[val].append((point, pr))
+        rev_map[0] = [(tuple([0 for _ in range(len(key))]), 1)]
+        self.origin_key = list(sorted(val_set, reverse=True))
+        self.origin_dis = [0 for _ in range(len(val_set))]
+        for point, v in val_map.items():
+            index = self.origin_key.index(v)
+            self.origin_dis[index] += dis[point]
+        self.origin_dis[-1] += (1-sum(dis.values()))
+        self.origin_dis = np.array(self.origin_dis)
+        self.trans = self.to_matrix()
+        self.rev = rev_map
